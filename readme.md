@@ -1,12 +1,14 @@
 # Note of [Beej's Guide to Network Programming](https://beej.us/guide/bgnet/html/)
 
-Two Types of Internet Sockets:
+## A glance of socket
+
+### Two Types of Internet Sockets:
 
 - SOCK_STREAM
 - SOCK_DGRAM
 
 
-Remember this for network class exams:
+### `ISO/OSI` Remember this for network class exams:
 
 - Application
 - Presentation
@@ -16,16 +18,13 @@ Remember this for network class exams:
 - Data Link
 - Physical
 
-A layered model more consistent with Unix ：
+### A layered model more consistent with Unix ：
 
 - Application Layer (telnet, ftp, etc.)
-- 应用层（telnet、ftp 等）
 - Host-to-Host Transport Layer (TCP, UDP)
-- 主机到主机传输层（TCP、UDP）
 - Internet Layer (IP and routing)
-- 互联网层（IP 和路由）
 - Network Access Layer (Ethernet, wi-fi, or whatever)
-- 网络访问层（以太网、wi-fi 或其他）
+
 
 
 ```C
@@ -182,11 +181,11 @@ printf("The address is: %s\n", ip6);
 
 来源强烈指出，旧的 IPv4 专用转换函数已经被 **`inet_pton()` 和 `inet_ntop()` 所取代（superseded/deprecated）**，因为它们不支持 IPv6。
 
-| 函数 | 描述 | 状态 | 替换函数 |
-| :--- | :--- | :--- | :--- |
+| 函数              | 描述                                                 | 状态                  | 替换函数        |
+| :---------------- | :--------------------------------------------------- | :-------------------- | :-------------- |
 | **`inet_addr()`** | 将点分十进制字符串转换为 `in_addr_t` (IP 地址整数)。 | **过时 (Obsolete)**。 | `inet_pton()`。 |
-| **`inet_aton()`** | 将点分十进制字符串转换为 `struct in_addr` 结构。 | **过时 (Obsolete)**。 | `inet_pton()`。 |
-| **`inet_ntoa()`** | 将 `struct in_addr` 转换为点分十进制字符串。 | **过时 (Obsolete)**。 | `inet_ntop()`。 |
+| **`inet_aton()`** | 将点分十进制字符串转换为 `struct in_addr` 结构。     | **过时 (Obsolete)**。 | `inet_pton()`。 |
+| **`inet_ntoa()`** | 将 `struct in_addr` 转换为点分十进制字符串。         | **过时 (Obsolete)**。 | `inet_ntop()`。 |
 
 **使用风险：**
 
@@ -261,6 +260,32 @@ IP 地址转换函数确保了地址部分（如 `struct in_addr` 或 `struct in
 -  `close()` and `shutdown()`—Get outta my face!
 -  `getpeername()`—Who are you?
 -  `gethostname()`—Who am I?
+-  
+
+![Jon Postel](https://upload.wikimedia.org/wikipedia/commons/f/f4/Jon_Postel_%28full_frame%29.jpg "Jon Postel in 1994, with hand-drawn map of Internet top-level domains. You'll be beaming data around the Internet like the Son of Jon Postel!")
+
+### `socket()`
+
+```c
+#include <sys/types.h>
+#include <sys/socket.h>
+
+int socket(int domain, int type, int protocol); 
+
+int s;
+struct addrinfo hints, *res;
+
+// do the lookup
+// [pretend we already filled out the "hints" struct]
+getaddrinfo("www.example.com", "http", &hints, &res);
+
+// again, you should do error-checking on getaddrinfo(), and walk
+// the "res" linked list looking for valid entries instead of just
+// assuming the first one is good (like many of these examples do).
+// See the section on client/server for real examples.
+
+s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+```
 
 ```mermaid
 graph TD
@@ -275,92 +300,108 @@ graph TD
     style DataTxRx fill:#A0D8A0,stroke:#333;
     style Cleanup fill:#C0C0C0,stroke:#333;
     style Error fill:#FF4500;
-    
+    style SuccessBreak fill:#FFB6C1, stroke:#333;
+
     Start("Program Start") --> Init_Hints;
 
-    subgraph "Initialization & Address Resolution (IP Version-Agnostic)"
+    subgraph "1. Initialization & Address Resolution"
         Init_Hints["memset() hints struct"];
         Init_Hints --> A("getaddrinfo(node, service, hints, &res)");
         A --> B{"getaddrinfo() Success?"};
-        B -- No --> Error_gai("gai_strerror() & Exit")
+        B -- No --> Error_gai("gai_strerror() & Exit");
         B -- Yes --> C{"Loop through 'res' linked list"};
-        C --> D{"Determine Flow: Stream (TCP) or Datagram (UDP)?"};
     end
     
-    subgraph "Core Setup (Loop through 'res' list)"
-        C --> E("socket(ai_family, ai_socktype, ai_protocol)");
+    subgraph "2. Core Loop: Create Socket & Bind/Connect"
+        C --> E("socket(res->ai_family, res->ai_socktype, res->ai_protocol)");
         E --> F{"socket() Success?"};
-        F -- No --> C;
-        F -- Yes --> G{"Is this a Client (connect only)?"};
-    end
-    
-    %% TCP SERVER PATH (Listening)
-    subgraph "Server Flow (SOCK_STREAM)"
-        G -- No (Server) --> H("setsockopt(SO_REUSEADDR)");
-        H --> I("bind(sockfd, ai_addr, ai_addrlen)");
-        I --> J{"bind() Success?"};
-        J -- No --> C;
-        J -- Yes --> K("listen(sockfd, backlog)");
-        K --> L("Accept Loop");
-        L --> M("accept(listener, &addr_storage, &addrlen) - Blocks");
-        M --> N("Returns new_fd for communication");
-        N --> O{"Multiprocessing: fork() / pthread_create()"};
-        O -- Child Process --> P("close(listener_sockfd)");
-        O -- Parent Process --> Q("close(new_fd) and continue");
-        Q --> L;
-    end
-    
-    %% TCP CLIENT PATH
-    subgraph "Client Flow (SOCK_STREAM)"
-        G -- Yes (Client) --> R("connect(sockfd, ai_addr, ai_addrlen)");
+        %% socket() failed, try next address
+        F -- No --> C; 
+        
+        F -- Yes --> D{"Check res->ai_socktype"};
+        
+        D -- "SOCK_STREAM (TCP)" --> G{"Client or Server?"};
+        
+        %% TCP Client Path in Loop
+        G -- Client --> R("connect(sockfd, res->ai_addr, res->ai_addrlen)");
         R --> S{"connect() Success?"};
-        S -- No --> T("close(sockfd) & Try next res->ai_next") --> C;
-        S -- Yes --> U("Connected");
+        %% connect() failed, try next address
+        S -- No --> CloseAndContinue_Client("close(sockfd)") --> C;
+        S -- Yes --> Success_TCP_Client("Success! Break Loop");
+        
+        %% TCP Server Path in Loop
+        G -- Server --> H("setsockopt(SO_REUSEADDR)");
+        H --> I("bind(sockfd, res->ai_addr, res->ai_addrlen)");
+        I --> J{"bind() Success?"};
+        %% bind() failed, try next address
+        J -- No --> CloseAndContinue_Server("close(sockfd)") --> C;
+        J -- Yes --> Success_TCP_Server("Success! Break Loop");
+
+        D -- "SOCK_DGRAM (UDP)" --> X{"Client (Talker) or Server (Listener)?"};
+        
+        %% UDP Server (Listener) Path in Loop
+        X -- "Server (Listener)" --> Z("bind(sockfd, res->ai_addr, res->ai_addrlen)");
+        Z --> Z_Success{"bind() Success?"};
+        %% bind() failed, try next address
+        Z_Success -- No --> CloseAndContinue_UDP("close(sockfd)") --> C;
+        Z_Success -- Yes --> Success_UDP_Server("Success! Break Loop");
+        
+        %% UDP Client (Talker) doesn't need to bind, so a successful socket is enough.
+        X -- "Client (Talker)" --> Success_UDP_Client("Success! Break Loop");
+    end
+
+    %% Post-Loop TCP Server Operations
+    subgraph "3a. TCP Server: Listen & Accept"
+        Success_TCP_Server --> K("listen(sockfd, backlog)");
+        K --> L("Accept Loop");
+        L --> M("accept(...) -> new_fd [Blocks]");
+        M --> O{"Multiprocessing: fork() / pthread_create()"};
+        O -- "Parent Process" --> Q("close(new_fd)") --> L;
+        O -- "Child Process" --> P("close(listener_sockfd)");
+    end
+
+    %% Data Exchange Stage for all protocols
+    subgraph "4. Data Exchange"
+        %% TCP Client enters here after successful connect
+        Success_TCP_Client --> V_TCP_Comm("TCP Communication");
+        %% TCP Server's child process enters here
+        P --> V_TCP_Comm;
+        V_TCP_Comm --> V1("send() / recv()");
+        V1 --> V3{"Peer Closed or Error?"};
+        V3 -- Yes --> W("close(communication_sockfd)");
+        V3 -- No --> V1;
+
+        %% UDP paths enter here after loop break
+        Success_UDP_Client --> V_UDP_Comm("UDP Communication");
+        Success_UDP_Server --> V_UDP_Comm;
+        V_UDP_Comm --> Y("sendto() / recvfrom()");
+        Y --> V_UDP_Comm_Loop{Continue?};
+        V_UDP_Comm_Loop -- Yes --> Y;
     end
     
-    %% DATA EXCHANGE AND CLEANUP (TCP)
-    subgraph "TCP Communication & Cleanup"
-        U --> V1("send(sockfd, msg, len, 0) - May be partial");
-        P --> V1;
-        V1 --> V2("recv(sockfd, buf, len, 0) - Blocks");
-        V2 --> V3{"recv() == 0?"};
-        V3 -- Yes (Peer Closed) --> W("close(sockfd)");
-        V3 -- No (Data Received) --> V2;
-        W --> Cleanup_End;
+    %% Optional path for Advanced I/O
+    subgraph "Advanced: I/O Multiplexing (Alternative to Blocking)"
+        K --> BB("poll() or select() on listener_sockfd");
+        M --> AddToSet("Add new_fd to poll() set") --> BB;
+        BB --> CC{"Event Ready?"};
+        CC -- "on listener_fd (New Connection)" --> M;
+        CC -- "on comm_fd (Data Ready)" --> V1;
     end
-    
-    %% UDP PATH
-    subgraph "Datagram Flow (SOCK_DGRAM)"
-        D -- Datagram (UDP) --> X{"Client or Listener?"};
-        X -- Client (Talker) --> Y("sendto(sockfd, msg, len, flags, to, tolen)");
-        X -- Listener (Server) --> Z("bind() mandatory");
-        Z --> AA("recvfrom(sockfd, buf, len, flags, from, fromlen) - Blocks");
-        Y --> Cleanup_End;
-        AA --> Cleanup_End;
-    end
-    
-    %% Advanced I/O
-    subgraph "I/O Multiplexing"
-        Loop --> BB("poll() or select()");
-        BB --> CC{"Event Ready? (POLLIN / FD_ISSET)"};
-        %% New connection ready to accept
-        CC -- Yes --> L
-        %% Data ready to receive
-        CC -- Yes --> V2
-        CC -- No (Timeout) --> Loop;
-    end
-    
-    %% Final Cleanup
-    Cleanup_End("End Communication") --> CC_Final("close(sockfd) / closesocket()");
-    CC_Final --> DD_Final("freeaddrinfo(res)");
-    DD_Final --> End("Program End");
+
+    %% Cleanup is the final stage
+    subgraph "5. Final Cleanup"
+        W --> End_Comm("End Communication");
+        V_UDP_Comm_Loop -- No --> End_Comm;
+        End_Comm --> DD_Final("freeaddrinfo(res)");
+        DD_Final --> End("Program End");
+    end```
 ```
 
 “核心系统调用”（System Calls）访问 Unix（及兼容）系统网络功能的关键，但其使用顺序和组合方式对于初学者来说是最大的难点。
 
 指南的目的是通过清晰地介绍这些系统调用及其正确的调用顺序，来帮助读者掌握网络编程。
 
-![Jon Postel](https://upload.wikimedia.org/wikipedia/commons/f/f4/Jon_Postel_%28full_frame%29.jpg "Jon Postel in 1994, with hand-drawn map of Internet top-level domains. You'll be beaming data around the Internet like the Son of Jon Postel!")
+
 
 ### 1. 核心系统调用的定义和重要性
 
@@ -373,12 +414,12 @@ graph TD
 
 来源强烈建议使用现代化的系统调用，特别是 `getaddrinfo()`，以实现代码的 IP 版本无关性（IP version-agnostic），从而简化 IPv4 到 IPv6 的迁移。
 
-| 系统调用 | 主要功能 | 重点看法 / 作用 |
-| :--- | :--- | :--- |
-| **`getaddrinfo()`** | **地址查找与结构体准备** | **现代编程的“主力”**。它取代了旧的 `gethostbyname()`，能同时进行 DNS 和服务名称查找，并返回一个包含 `struct sockaddr` 的链接列表 (`struct addrinfo`)，使代码不必关心 IPv4 或 IPv6。服务器端可使用 `AI_PASSIVE` 标志让它自动填充本地 IP 地址。|
-| **`socket()`** | **创建套接字描述符** | 通常是网络编程的第一步。现代用法是从 `getaddrinfo()` 的结果中直接获取参数（`ai_family`, `ai_socktype`, `ai_protocol`），避免硬编码。|
-| **`freeaddrinfo()`** | **释放地址信息** | 必须在完成对 `getaddrinfo()` 返回的链接列表使用后调用，以防止内存泄漏。|
-| **`gai_strerror()`** | **错误报告** | 用于将 `getaddrinfo()` 返回的非零错误代码转换为可打印的字符串。|
+| 系统调用             | 主要功能                 | 重点看法 / 作用   |
+| :------------------- | :----------------------- | :-------------------------------------------------- |
+| **`getaddrinfo()`**  | **地址查找与结构体准备** | **现代编程的“主力”**。它取代了旧的 `gethostbyname()`，能同时进行 DNS 和服务名称查找，并返回一个包含 `struct sockaddr` 的链接列表 (`struct addrinfo`)，使代码不必关心 IPv4 或 IPv6。服务器端可使用 `AI_PASSIVE` 标志让它自动填充本地 IP 地址。 |
+| **`socket()`**       | **创建套接字描述符**     | 通常是网络编程的第一步。现代用法是从 `getaddrinfo()` 的结果中直接获取参数（`ai_family`, `ai_socktype`, `ai_protocol`），避免硬编码。   |
+| **`freeaddrinfo()`** | **释放地址信息**         | 必须在完成对 `getaddrinfo()` 返回的链接列表使用后调用，以防止内存泄漏。  |
+| **`gai_strerror()`** | **错误报告**             | 用于将 `getaddrinfo()` 返回的非零错误代码转换为可打印的字符串。      |
 
 ### 3. 连接与数据传输的核心系统调用
 
