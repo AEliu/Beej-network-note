@@ -1,3 +1,5 @@
+# Note of [Beej's Guide to Network Programming](https://beej.us/guide/bgnet/html/)
+
 Two Types of Internet Sockets:
 
 - SOCK_STREAM
@@ -209,7 +211,7 @@ IP 地址转换函数确保了地址部分（如 `struct in_addr` 或 `struct in
 
 ## How to jump from ipv4 to v6
 
-1.  First of all, try to use [`getaddrinfo()`](#structs) to get all the `struct sockaddr` info, instead of packing the structures by hand. This will keep you IP version-agnostic, and will eliminate many of the subsequent steps.
+1.  First of all, try to use `getaddrinfo()` to get all the `struct sockaddr` info, instead of packing the structures by hand. This will keep you IP version-agnostic, and will eliminate many of the subsequent steps.
     
 2.  Any place that you find you’re hard-coding anything related to the IP version, try to wrap up in a helper function.
     
@@ -232,9 +234,9 @@ IP 地址转换函数确保了地址部分（如 `struct in_addr` 或 `struct in
     struct in6_addr ia6 = IN6ADDR_ANY_INIT;
     ```
     
-6.  Instead of `struct sockaddr_in` use `struct sockaddr_in6`, being sure to add “6” to the fields as appropriate (see [`struct`s](#structs), above). There is no `sin6_zero` field.
+6.  Instead of `struct sockaddr_in` use `struct sockaddr_in6`, being sure to add “6” to the fields as appropriate. There is no `sin6_zero` field.
     
-7.  Instead of `struct in_addr` use `struct in6_addr`, being sure to add “6” to the fields as appropriate (see [`struct`s](#structs), above).
+7.  Instead of `struct in_addr` use `struct in6_addr`, being sure to add “6” to the fields as appropriate.
     
 8.  Instead of `inet_aton()` or `inet_addr()`, use `inet_pton()`.
     
@@ -247,6 +249,112 @@ IP 地址转换函数确保了地址部分（如 `struct in_addr` 或 `struct in
 12.  `INADDR_BROADCAST` no longer works. Use IPv6 multicast instead.
 
 ## System Calls or Bust
+
+-  `getaddrinfo()`—Prepare to launch!
+-  `socket()`—Get the File Descriptor!
+-  `bind()`—What port am I on?
+-  `connect()`—Hey, you!
+-  `listen()`—Will somebody please call me?
+-  `accept()`—“Thank you for calling port 3490.”
+-  `send()` and `recv()`—Talk to me, baby!
+-  `sendto()` and `recvfrom()`—Talk to me, DGRAM-style
+-  `close()` and `shutdown()`—Get outta my face!
+-  `getpeername()`—Who are you?
+-  `gethostname()`—Who am I?
+
+```mermaid
+graph TD
+    %% Define Node Styles
+    style Start fill:#DDEEFF,stroke:#333;
+    style End fill:#FFD700,stroke:#333;
+    style Init fill:#B0E0E6,stroke:#333;
+    style Loop fill:#ADD8E6,stroke:#333;
+    style SocketCreation fill:#90EE90,stroke:#333;
+    style ClientConnect fill:#F08080,stroke:#333;
+    style ServerBind fill:#FFA07A,stroke:#333;
+    style DataTxRx fill:#A0D8A0,stroke:#333;
+    style Cleanup fill:#C0C0C0,stroke:#333;
+    style Error fill:#FF4500;
+    
+    Start("Program Start") --> Init_Hints;
+
+    subgraph "Initialization & Address Resolution (IP Version-Agnostic)"
+        Init_Hints["memset() hints struct"];
+        Init_Hints --> A("getaddrinfo(node, service, hints, &res)");
+        A --> B{"getaddrinfo() Success?"};
+        B -- No --> Error_gai("gai_strerror() & Exit")
+        B -- Yes --> C{"Loop through 'res' linked list"};
+        C --> D{"Determine Flow: Stream (TCP) or Datagram (UDP)?"};
+    end
+    
+    subgraph "Core Setup (Loop through 'res' list)"
+        C --> E("socket(ai_family, ai_socktype, ai_protocol)");
+        E --> F{"socket() Success?"};
+        F -- No --> C;
+        F -- Yes --> G{"Is this a Client (connect only)?"};
+    end
+    
+    %% TCP SERVER PATH (Listening)
+    subgraph "Server Flow (SOCK_STREAM)"
+        G -- No (Server) --> H("setsockopt(SO_REUSEADDR)");
+        H --> I("bind(sockfd, ai_addr, ai_addrlen)");
+        I --> J{"bind() Success?"};
+        J -- No --> C;
+        J -- Yes --> K("listen(sockfd, backlog)");
+        K --> L("Accept Loop");
+        L --> M("accept(listener, &addr_storage, &addrlen) - Blocks");
+        M --> N("Returns new_fd for communication");
+        N --> O{"Multiprocessing: fork() / pthread_create()"};
+        O -- Child Process --> P("close(listener_sockfd)");
+        O -- Parent Process --> Q("close(new_fd) and continue");
+        Q --> L;
+    end
+    
+    %% TCP CLIENT PATH
+    subgraph "Client Flow (SOCK_STREAM)"
+        G -- Yes (Client) --> R("connect(sockfd, ai_addr, ai_addrlen)");
+        R --> S{"connect() Success?"};
+        S -- No --> T("close(sockfd) & Try next res->ai_next") --> C;
+        S -- Yes --> U("Connected");
+    end
+    
+    %% DATA EXCHANGE AND CLEANUP (TCP)
+    subgraph "TCP Communication & Cleanup"
+        U --> V1("send(sockfd, msg, len, 0) - May be partial");
+        P --> V1;
+        V1 --> V2("recv(sockfd, buf, len, 0) - Blocks");
+        V2 --> V3{"recv() == 0?"};
+        V3 -- Yes (Peer Closed) --> W("close(sockfd)");
+        V3 -- No (Data Received) --> V2;
+        W --> Cleanup_End;
+    end
+    
+    %% UDP PATH
+    subgraph "Datagram Flow (SOCK_DGRAM)"
+        D -- Datagram (UDP) --> X{"Client or Listener?"};
+        X -- Client (Talker) --> Y("sendto(sockfd, msg, len, flags, to, tolen)");
+        X -- Listener (Server) --> Z("bind() mandatory");
+        Z --> AA("recvfrom(sockfd, buf, len, flags, from, fromlen) - Blocks");
+        Y --> Cleanup_End;
+        AA --> Cleanup_End;
+    end
+    
+    %% Advanced I/O
+    subgraph "I/O Multiplexing"
+        Loop --> BB("poll() or select()");
+        BB --> CC{"Event Ready? (POLLIN / FD_ISSET)"};
+        %% New connection ready to accept
+        CC -- Yes --> L
+        %% Data ready to receive
+        CC -- Yes --> V2
+        CC -- No (Timeout) --> Loop;
+    end
+    
+    %% Final Cleanup
+    Cleanup_End("End Communication") --> CC_Final("close(sockfd) / closesocket()");
+    CC_Final --> DD_Final("freeaddrinfo(res)");
+    DD_Final --> End("Program End");
+```
 
 “核心系统调用”（System Calls）访问 Unix（及兼容）系统网络功能的关键，但其使用顺序和组合方式对于初学者来说是最大的难点。
 
