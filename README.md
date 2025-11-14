@@ -7,7 +7,6 @@
 - SOCK_STREAM
 - SOCK_DGRAM
 
-
 ### `ISO/OSI` Remember this for network class exams:
 
 - Application
@@ -260,9 +259,74 @@ IP 地址转换函数确保了地址部分（如 `struct in_addr` 或 `struct in
 -  `close()` and `shutdown()`—Get outta my face!
 -  `getpeername()`—Who are you?
 -  `gethostname()`—Who am I?
--  
+
 
 ![Jon Postel](https://upload.wikimedia.org/wikipedia/commons/f/f4/Jon_Postel_%28full_frame%29.jpg "Jon Postel in 1994, with hand-drawn map of Internet top-level domains. You'll be beaming data around the Internet like the Son of Jon Postel!")
+
+### `getaddrinfo()`
+
+```
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+
+int getaddrinfo(const char *node,   // e.g. "www.example.com" or IP
+                const char *service,  // e.g. "http" or port number
+                const struct addrinfo *hints,
+                struct addrinfo **res);
+```
+
+`hints` parameter points to a struct addrinfo that you’ve already filled out with relevant information.
+
+```c
+memset(&hints, 0, sizeof hints); // make sure the struct is empty
+hints.ai_family = AF_UNSPEC;     // don't care IPv4 or IPv6
+hints.ai_socktype = SOCK_STREAM; // TCP stream sockets
+```
+`res` point to a linked list of struct addrinfo, you should free it with `freeaddrinfo(res)` call.
+
+```c
+for(p = res;p != NULL; p = p->ai_next) {
+    void *addr;
+    char *ipver;
+    struct sockaddr_in *ipv4;
+    struct sockaddr_in6 *ipv6;
+
+    // get the pointer to the address itself,
+    // different fields in IPv4 and IPv6:
+    if (p->ai_family == AF_INET) { // IPv4
+        ipv4 = (struct sockaddr_in *)p->ai_addr;
+        addr = &(ipv4->sin_addr);
+        ipver = "IPv4";
+    } else { // IPv6
+        ipv6 = (struct sockaddr_in6 *)p->ai_addr;
+        addr = &(ipv6->sin6_addr);
+        ipver = "IPv6";
+    }
+
+    // convert the IP to a string and print it:
+    inet_ntop(p->ai_family, addr, ipstr, sizeof ipstr);
+    printf("  %s: %s\n", ipver, ipstr);
+}
+
+freeaddrinfo(res);
+```
+
+As mentioned above, the `const struct addrinfo ` structure is defined as follow:
+
+```c
+struct addrinfo {
+    int              ai_flags;     // AI_PASSIVE, AI_CANONNAME, etc.
+    int              ai_family;    // AF_INET, AF_INET6, AF_UNSPEC
+    int              ai_socktype;  // SOCK_STREAM, SOCK_DGRAM
+    int              ai_protocol;  // use 0 for "any"
+    size_t           ai_addrlen;   // size of ai_addr in bytes
+    struct sockaddr *ai_addr;      // struct sockaddr_in or _in6
+    char            *ai_canonname; // full canonical hostname
+
+    struct addrinfo *ai_next;      // linked list, next node
+};
+```
 
 ### `socket()`
 
@@ -414,12 +478,12 @@ graph TD
 
 来源强烈建议使用现代化的系统调用，特别是 `getaddrinfo()`，以实现代码的 IP 版本无关性（IP version-agnostic），从而简化 IPv4 到 IPv6 的迁移。
 
-| 系统调用             | 主要功能                 | 重点看法 / 作用   |
-| :------------------- | :----------------------- | :-------------------------------------------------- |
+| 系统调用             | 主要功能                 | 重点看法 / 作用                                                                                                                                                                                                                               |
+| :------------------- | :----------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`getaddrinfo()`**  | **地址查找与结构体准备** | **现代编程的“主力”**。它取代了旧的 `gethostbyname()`，能同时进行 DNS 和服务名称查找，并返回一个包含 `struct sockaddr` 的链接列表 (`struct addrinfo`)，使代码不必关心 IPv4 或 IPv6。服务器端可使用 `AI_PASSIVE` 标志让它自动填充本地 IP 地址。 |
-| **`socket()`**       | **创建套接字描述符**     | 通常是网络编程的第一步。现代用法是从 `getaddrinfo()` 的结果中直接获取参数（`ai_family`, `ai_socktype`, `ai_protocol`），避免硬编码。   |
-| **`freeaddrinfo()`** | **释放地址信息**         | 必须在完成对 `getaddrinfo()` 返回的链接列表使用后调用，以防止内存泄漏。  |
-| **`gai_strerror()`** | **错误报告**             | 用于将 `getaddrinfo()` 返回的非零错误代码转换为可打印的字符串。      |
+| **`socket()`**       | **创建套接字描述符**     | 通常是网络编程的第一步。现代用法是从 `getaddrinfo()` 的结果中直接获取参数（`ai_family`, `ai_socktype`, `ai_protocol`），避免硬编码。                                                                                                          |
+| **`freeaddrinfo()`** | **释放地址信息**         | 必须在完成对 `getaddrinfo()` 返回的链接列表使用后调用，以防止内存泄漏。                                                                                                                                                                       |
+| **`gai_strerror()`** | **错误报告**             | 用于将 `getaddrinfo()` 返回的非零错误代码转换为可打印的字符串。                                                                                                                                                                               |
 
 ### 3. 连接与数据传输的核心系统调用
 
