@@ -330,6 +330,8 @@ struct addrinfo {
 
 ### `socket()`
 
+It returns a socket descriptor that you can use in later system calls, or -1 on error. 
+
 ```c
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -349,6 +351,38 @@ getaddrinfo("www.example.com", "http", &hints, &res);
 // See the section on client/server for real examples.
 
 s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+```
+
+- `domain` is PF_INET or PF_INET6
+- `type` is SOCK_STREAM or SOCK_DGRAM
+- `protocol` can be set to 0 to choose the proper protocol for the given type. 
+- you can call `getprotobyname()` to look up the protocol you want, “tcp” or “udp”
+
+### `bind()`
+
+Associate that socket with a port. 一般在服务器端使用。
+
+```c
+struct addrinfo hints, *res;
+int sockfd;
+
+// first, load up address structs with getaddrinfo():
+
+memset(&hints, 0, sizeof hints);
+hints.ai_family = AF_UNSPEC;  // use IPv4 or IPv6, whichever
+hints.ai_socktype = SOCK_STREAM;
+hints.ai_flags = AI_PASSIVE;     // fill in my IP for me
+
+getaddrinfo(NULL, "3490", &hints, &res);
+
+// make a socket:
+
+sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+
+// bind it to the port we passed in to getaddrinfo():
+
+bind(sockfd, res->ai_addr, res->ai_addrlen);
+// int bind(int sockfd, struct sockaddr *my_addr, int addrlen);
 ```
 
 ```mermaid
